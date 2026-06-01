@@ -1,0 +1,22 @@
+{
+  "ingredients": [
+    {
+      "ingredient": "ketoprofen",
+      "stability_range_days": 90,
+      "optimal_ph": "5.0–6.5",
+      "light_sensitive": true,
+      "storage": "refrigerated",
+      "bud_notes": "Stable in PLO gel base for 90 days at refrigerated temps.",
+      "source": "Allen LV Jr. (2012). The Art, Science, and Technology of Pharmaceutical Compounding, 4th ed."
+    },
+    {
+      "ingredient": "hydrocortisone",
+      "stability_range_days": 30,
+      "optimal_ph": "5.0–7.0",
+      "light_sensitive": false,
+      "storage": "controlled room temperature",
+      "bud_notes": "Stable in hydrophilic ointment base; aqueous cream BUD governed by USP 795 category.",
+      "source": "Allen LV Jr. (2012). The Art, Science, and Technology of Pharmaceutical Compounding, 4th ed."
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "updated": "2026-05-31",
+  "source": "FDA 503A Bulks List / Drug Safety Withdrawals (static fallback — non-authoritative)",
+  "ineligible": [
+    { "name": "estriol", "reason": "On FDA 503A difficult-to-compound list" },
+    { "name": "bromocriptine", "reason": "Withdrawn for safety — not for compounding" }
+  ]
+}

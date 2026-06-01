@@ -1,0 +1,40 @@
+{
+  "rules": [
+    {
+      "id": "aq-nonpreserved",
+      "aw_class": "aqueous",
+      "preserved": false,
+      "default_days": 14,
+      "storage": "Refrigerated (2–8°C)",
+      "citation": "USP <795> Table 1, nonpreserved aqueous dosage forms (Nov 1, 2023)",
+      "applies_to": ["cream", "gel", "solution", "suspension", "emulsion", "spray", "lotion"]
+    },
+    {
+      "id": "aq-preserved",
+      "aw_class": "aqueous",
+      "preserved": true,
+      "default_days": 35,
+      "storage": "Controlled room temperature or refrigerated",
+      "citation": "USP <795> Table 1, preserved aqueous dosage forms (Nov 1, 2023)",
+      "applies_to": ["cream", "gel", "solution", "suspension", "emulsion", "spray", "lotion"]
+    },
+    {
+      "id": "nonaq-oral",
+      "aw_class": "nonaqueous",
+      "oral": true,
+      "default_days": 90,
+      "storage": "Per stability data; controlled room temperature unless noted",
+      "citation": "USP <795> Table 1, nonaqueous oral liquid dosage forms (Nov 1, 2023)",
+      "applies_to": ["oral liquid", "oral suspension", "oral solution"]
+    },
+    {
+      "id": "nonaq-other",
+      "aw_class": "nonaqueous",
+      "oral": false,
+      "default_days": 180,
+      "storage": "Per stability data; controlled room temperature unless noted",
+      "citation": "USP <795> Table 1, other nonaqueous dosage forms (Nov 1, 2023)",
+      "applies_to": ["ointment", "suppository", "capsule", "powder", "stick"]
+    }
+  ]
+}

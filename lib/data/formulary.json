@@ -1,0 +1,38 @@
+{
+  "formulas": [
+    {
+      "drug": "hydrocortisone",
+      "strength_pct": 1,
+      "dosage_form": "cream",
+      "batch_size_g": 100,
+      "ingredients": [
+        { "name": "Hydrocortisone USP", "quantity_g": 1.0, "role": "active" },
+        { "name": "Hydrophilic ointment base", "quantity_g": 99.0, "role": "base" }
+      ],
+      "procedure_steps": [
+        "Weigh hydrocortisone on a calibrated analytical balance.",
+        "Levigate with a small amount of base to form a smooth paste.",
+        "Geometrically incorporate the remaining base; mix until uniform."
+      ],
+      "aw_class": "aqueous",
+      "preserved": false
+    },
+    {
+      "drug": "ketoprofen",
+      "strength_pct": 5,
+      "dosage_form": "gel",
+      "batch_size_g": 100,
+      "ingredients": [
+        { "name": "Ketoprofen USP", "quantity_g": 5.0, "role": "active" },
+        { "name": "PLO gel base", "quantity_g": 95.0, "role": "base" }
+      ],
+      "procedure_steps": [
+        "Weigh ketoprofen on a calibrated analytical balance.",
+        "Wet with a few drops of lecithin/isopropyl palmitate solution.",
+        "Incorporate into PLO gel base; shear until a uniform gel forms."
+      ],
+      "aw_class": "aqueous",
+      "preserved": false
+    }
+  ]
+}
