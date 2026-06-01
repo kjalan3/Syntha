@@ -1,13 +1,14 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { DRAFTER_TOOLS, dispatchTool } from '@/lib/agents/anthropic-tools';
 import type { SandboxRunner } from '@/lib/tools/calculator';
-import type { Prescription, ReferencePack, StreamEvent, MFRSectionName } from '@/lib/types';
+import type { Prescription, ReferencePack, StreamEvent, MFRSectionName, BudResult } from '@/lib/types';
 
 const MODEL = process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-6';
 
 export interface DrafterResult {
   sections: Partial<Record<MFRSectionName, string>>;
   statedConcentrationPct: string | null;
+  bud: BudResult | null;
 }
 
 function systemPrompt(pack: ReferencePack): string {
@@ -43,6 +44,7 @@ export async function runDrafter(
   const messages: Anthropic.MessageParam[] = [{ role: 'user', content: userMsg }];
   const sections: Partial<Record<MFRSectionName, string>> = {};
   let statedConcentrationPct: string | null = null;
+  let bud: BudResult | null = null;
 
   for (let turn = 0; turn < 12; turn++) {
     const resp = await client.messages.create({
@@ -78,6 +80,9 @@ export async function runDrafter(
       if (tu.name === 'calculate_formulation' && (output as { concentration_pct?: string }).concentration_pct) {
         statedConcentrationPct = (output as { concentration_pct: string }).concentration_pct;
       }
+      if (tu.name === 'compute_bud' && typeof (output as { bud_days?: unknown }).bud_days === 'number') {
+        bud = output as BudResult;
+      }
       if (tu.name === 'fill_mfr_section') {
         const r = output as { section: MFRSectionName; content: string };
         sections[r.section] = r.content;
@@ -88,5 +93,5 @@ export async function runDrafter(
     messages.push({ role: 'user', content: toolResults });
   }
 
-  return { sections, statedConcentrationPct };
+  return { sections, statedConcentrationPct, bud };
 }

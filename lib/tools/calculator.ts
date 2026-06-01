@@ -21,9 +21,12 @@ export async function calculateConcentration(
   if (total.isZero()) throw new Error('totalGrams must be non-zero');
 
   if (sandbox) {
+    const g = new Decimal(input.grams);     // already validated parseable by Decimal above for total; validate grams too
+    const tg = total;                       // total already constructed and checked non-zero
+    if (!g.isFinite() || !tg.isFinite()) throw new Error('non-finite quantity');
     const snippet = `
 import Decimal from 'decimal.js';
-const pct = new Decimal('${input.grams}').div('${input.totalGrams}').mul(100).toFixed(4);
+const pct = new Decimal('${g.toString()}').div('${tg.toString()}').mul(100).toFixed(4);
 console.log(JSON.stringify({ concentration_pct: pct }));
 `;
     const out = await sandbox.run(snippet);

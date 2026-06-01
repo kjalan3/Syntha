@@ -86,7 +86,7 @@ export async function POST(req: Request): Promise<Response> {
           const auditRun: AuditRun = {
             id: runId, formula: rx,
             mfr: draft.sections as Record<MFRSectionName, string>,
-            bud: null, passed: signoff.passed,
+            bud: draft.bud, passed: signoff.passed,
             startedAt, finishedAt, events,
           };
           const persisted = await persistRun(auditRun);
