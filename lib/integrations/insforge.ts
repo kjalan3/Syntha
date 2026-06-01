@@ -8,6 +8,8 @@ interface PersistOpts {
   client?: InsforgeClient | null; // injectable for tests
 }
 
+// Memoized for the process lifetime, including a null result (fine for serverless/demo
+// cold-start; if env is set later in the same long-lived process, reload the module).
 let cachedClient: InsforgeClient | null | undefined;
 
 /** Lazily build the client; returns null when env is not configured. */
