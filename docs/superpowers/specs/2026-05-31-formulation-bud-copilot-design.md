@@ -1,7 +1,7 @@
 # Syntha — Formulation & BUD Copilot: Design Spec
 
 **Date:** 2026-05-31  
-**Status:** Approved — updated with sponsor integrations, three-way checker, USP 795 Nov 2023 BUD fix, reference pack  
+**Status:** Design proposal — **not yet implemented**. Sponsor integrations, three-way checker, USP 795 Nov 2023 BUD logic, and reference pack are specified below but not present in the codebase. The repository currently contains this spec plus a default Next.js scaffold; none of the `lib/`, `data/`, or test files described here exist yet. Treat every "the engine does X" / "has tests" statement as a design requirement to be built and verified — not an existing guarantee.  
 **Scope:** USP 795 non-sterile compounding only
 
 ---
@@ -24,14 +24,16 @@ Single Next.js app, single streaming API route. No Python sidecar, no second ser
 POST /api/generate
   ↓
 Step 0: Compliance gate  — deterministic code checks drug against FDA difficult-to-compound list
-                            hard-stop with qa_finding if ineligible; never reaches agents
+                            FAILS CLOSED: if the FDA list cannot be confirmed fresh-and-authoritative,
+                            the request is blocked, not passed; hard-stop if ineligible OR unverifiable;
+                            never reaches agents
   ↓
 Phase 1: Drafter agent   — Claude call #1 + reference pack; tool loop; emits mfr_section events
 Phase 2: Reviewer agent  — Claude call #2; receives MFR artifact + prescription + reference pack (NOT drafter context)
                             re-runs math via tool calls; app code calls reconcile() and emits qa_finding
   ↓
-SSE stream closes → client renders final document + QA panel
-Post-stream (non-blocking): persistRun() writes to Insforge
+When audit enabled: persistRun() runs BEFORE 'done' — writes atomically, emits audit_status
+SSE stream closes → client renders final document + QA panel + audit state
 ```
 
 **Independence contract:** The reviewer is a brand-new `anthropic.messages.create()` call. It receives only the serialised MFR artifact (sections + stated values), the original prescription (ordered strength), and a formula-scoped reference pack — no drafter messages, no drafter tool results, no drafter reasoning. It re-runs all math with its own tool calls. The deterministic three-way reconciliation (`reconcile()`) runs in app code after the reviewer's tool loop completes; the model never decides whether numbers match.
@@ -64,7 +66,7 @@ lib/
     compliance-gate.ts              # FDA difficult-to-compound check; hard-stop if ineligible
   integrations/
     daytona.ts                      # Sandbox lifecycle: create, codeRun wrapper, delete
-    insforge.ts                     # InsForge client + persistRun() fire-and-forget
+    insforge.ts                     # InsForge client + persistRun() atomic idempotent RPC
     rtrvr.ts                        # Rtrvr API calls + cache normalizer (script use only)
   data/
     bud_rules.json                  # ~20–30 rules: form_class × aw_class × preserved → days + citation
@@ -89,6 +91,7 @@ scripts/
 migrations/
   001_mfr_runs.sql
   002_agent_decisions.sql
+  003_persist_run_fn.sql            # Atomic, idempotent persist_run(p_run, p_decisions) RPC
 
 cache/                              # Runtime-only, gitignored
   regulatory.json                   # Rtrvr-fetched USP BUD guidance, normalized
@@ -103,7 +106,9 @@ Every SSE message is a JSON-encoded `StreamEvent`. The UI reacts to each type in
 
 ```typescript
 type StreamEvent =
-  | { type: 'compliance_result'; eligible: boolean; drug: string; reason?: string }
+  | { type: 'compliance_result'; eligible: boolean; drug: string; reason?: string;
+                                  status: 'eligible' | 'ineligible' | 'unverifiable';
+                                  source: { origin: 'fda_cache' | 'static_fallback'; fetched_at: string | null; stale: boolean } }
   | { type: 'agent_start';    agent: 'drafter' | 'reviewer' }
   | { type: 'tool_call';      tool: string; input: unknown }
   | { type: 'tool_result';    tool: string; output: unknown; ms: number }
@@ -117,16 +122,16 @@ type StreamEvent =
                                invariant: 'computed_vs_stated' | 'stated_vs_prescribed' | 'computed_vs_prescribed' | 'ok';
                                message: string }
   | { type: 'qa_signoff';     passed: boolean; summary: string }
-  | { type: 'audit_written';  run_id: string }
+  | { type: 'audit_status';   run_id: string; state: 'pending' | 'written' | 'failed'; detail?: string }
   | { type: 'done' }
   | { type: 'error';          message: string }
 ```
 
-- `compliance_result`: emitted before any agent runs; if `eligible: false` the stream closes immediately with no MFR attempt.
+- `compliance_result`: emitted before any agent runs. The stream closes with no MFR attempt whenever `eligible` is `false` — and `eligible` is `false` for **both** `status: 'ineligible'` (drug is on the list) and `status: 'unverifiable'` (the list could not be confirmed fresh-and-authoritative). Only `status: 'eligible'` proceeds. The `source` object (origin, `fetched_at`, `stale`) MUST be surfaced in the UI so the operator can see exactly which list backed the decision and how old it is — a pass on a stale static fallback is never shown as equivalent to a pass on a fresh official list.
 - `mfr_section`: populates the document panel as sections arrive.
 - `qa_finding`: `invariant` field names exactly which of the three-way checks failed (see Reviewer Agent section). Emitted by app code, not the model.
 - `sandbox_exec`/`sandbox_result`: make isolated math visible in the work panel.
-- `audit_written`: emitted post-stream, display-only.
+- `audit_status`: reports the durable-write outcome. When audit is enabled, the run is **not** reported as fully complete until this resolves to `written` or `failed` (see Insforge section). `failed` is surfaced to the operator, not just logged — a compounding QA record with no audit trail must be visible, never silent.
 
 ---
 
@@ -174,7 +179,7 @@ The engine returns `min(category_default, stability_data.bud_days)` — stabilit
 }
 ```
 
-The BUD engine has unit tests for every branch, including both demo formulas.
+**Required before this design can be marked implemented:** the BUD engine must ship with `data/bud_rules.json`, `lib/tools/bud-engine.ts`, and a unit-test file covering every branch — explicitly including a regression test asserting that both demo formulas (aqueous hydrocortisone cream and aqueous ketoprofen PLO gel, `aw ≥ 0.60`) resolve to the 14-day aqueous BUD and can never regress to 180 days. Until those files and passing tests exist in the tree, this is an unverified invariant, not a guarantee.
 
 ---
 
@@ -366,7 +371,7 @@ Structured standard formulas for the two demo compounds. Ingredients, quantities
 
 ### `data/fda-compliance-fallback.json`
 
-Short static list used when `cache/fda-list.json` is absent or stale. Entries include drugs on the FDA 503A difficult-to-compound list and drugs withdrawn from the market for safety reasons. Populated from the current FDA published list.
+Short static list of drugs on the FDA 503A difficult-to-compound list and drugs withdrawn from the market for safety reasons. **It is a deny-list supplement, not an authoritative source of truth.** A positive match against it always blocks (it can only add known-bad drugs); a "not found" against it does **not** certify eligibility, because it is not guaranteed complete or current. When it is the only data available, the compliance gate returns `status: 'unverifiable'` and fails closed (except in explicit `DEMO_OFFLINE_MODE`). Refresh `cache/fda-list.json` via `scripts/refresh-regulatory-cache.ts` to get an authoritative pass.
 
 ```json
 {
@@ -423,41 +428,53 @@ create table agent_decisions (
 );
 ```
 
-**Write pattern** — non-blocking, fire-and-forget after SSE `done`:
-```typescript
-// Called after stream closes; errors logged but never thrown
-async function persistRun(run: AuditRun): Promise<void> {
-  try {
-    const { data, error } = await insforge.database
-      .from('mfr_runs')
-      .insert({
-        formula: run.formula,
-        mfr: run.mfr,
-        bud: run.bud,
-        passed: run.passed,
-        started_at: run.startedAt,
-        finished_at: run.finishedAt,
-      })
-      .select()
-      .single();
-    if (error || !data) throw error;
+**Write pattern** — atomic, idempotent, and resolved *before* the run is reported complete (when audit is enabled). The earlier "fire-and-forget after `done`" approach is rejected: it could insert `mfr_runs` but lose `agent_decisions` on a mid-write failure, leaving an audit row with no decision trail and reporting success anyway. Two safeguards fix this:
 
-    const decisions = run.events.map((e, idx) => ({
-      run_id: data.id,
-      idx,
-      agent: e.agent,
-      kind: e.type,
-      payload: e,
-      ts: e.ts,
-    }));
-    await insforge.database.from('agent_decisions').insert(decisions);
-  } catch (err) {
-    console.error('[insforge] audit write failed:', err);
+1. **One transaction, not two sequential inserts.** Both tables are written in a single atomic unit via a server-side RPC (Postgres function) so `mfr_runs` and `agent_decisions` can never diverge — either both land or neither does.
+2. **Client-generated idempotency key.** The `run_id` (uuid) is generated up front, before the agents run, and used as the primary key for `mfr_runs`. The RPC is `on conflict do nothing`, so a retry of the same run is safe and never duplicates rows.
+
+```typescript
+// run.id is generated at route start (NOT defaulted by the DB), so it is stable
+// across retries and already embedded in every streamed event for correlation.
+async function persistRun(run: AuditRun): Promise<'written' | 'failed'> {
+  const decisions = run.events.map((e, idx) => ({
+    run_id: run.id, idx, agent: e.agent, kind: e.type, payload: e, ts: e.ts,
+  }));
+
+  // Single atomic RPC: inserts the run row AND all decision rows in one transaction,
+  // idempotent on run.id. Defined in migrations/003_persist_run_fn.sql.
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const { error } = await insforge.database.rpc('persist_run', {
+        p_run: {
+          id: run.id, formula: run.formula, mfr: run.mfr, bud: run.bud,
+          passed: run.passed, started_at: run.startedAt, finished_at: run.finishedAt,
+        },
+        p_decisions: decisions,
+      });
+      if (error) throw error;
+      return 'written';
+    } catch (err) {
+      console.error(`[insforge] audit write attempt ${attempt} failed:`, err);
+      if (attempt === 3) return 'failed';   // surfaced to the operator, not swallowed
+    }
   }
+  return 'failed';
 }
 ```
 
-**Graceful degradation:** If `INSFORGE_BASE_URL` / `INSFORGE_ANON_KEY` are absent, `persistRun` is a no-op. The user-facing stream is never affected.
+**Sequencing in the route (audit enabled):**
+```typescript
+emit({ type: 'audit_status', run_id: run.id, state: 'pending' });
+const result = await persistRun(run);          // awaited BEFORE 'done'
+emit({ type: 'audit_status', run_id: run.id, state: result,
+       detail: result === 'failed' ? 'Audit trail not durably saved — record is NOT signed off' : undefined });
+emit({ type: 'done' });
+```
+
+`migrations/003_persist_run_fn.sql` defines `persist_run(p_run jsonb, p_decisions jsonb)` as a `plpgsql` function that does the `mfr_runs` insert (`on conflict (id) do nothing`) and the `agent_decisions` bulk insert inside the implicit function transaction.
+
+**Graceful degradation:** If `INSFORGE_BASE_URL` / `INSFORGE_ANON_KEY` are absent, audit is *disabled* (not silently failing): `persistRun` is skipped and a single `audit_status { state: 'failed', detail: 'audit disabled — no Insforge configured' }` is emitted so the absence of an audit trail is explicit on screen, never mistaken for a saved record.
 
 ---
 
@@ -572,12 +589,14 @@ npx ts-node scripts/refresh-regulatory-cache.ts
 ```
 Run manually before a demo. The `cache/` directory is gitignored. **Do not commit** either cache file — they may contain full-text regulatory content.
 
-**Cache readers (7-day stale threshold):**
-- `stability-db.ts` → `getRegulatoryRules()`: reads `cache/regulatory.json`, falls back to `data/bud_rules.json`
-- `compliance-gate.ts` → `getFDAList()`: reads `cache/fda-list.json`, falls back to `data/fda-compliance-fallback.json`
+**Cache readers (7-day stale threshold) — two different failure postures:**
+
+- `stability-db.ts` → `getRegulatoryRules()`: **fail-open is acceptable.** This feeds the Reviewer's *rationale text* only; the deterministic BUD math comes from `bud_rules.json` regardless. Reads `cache/regulatory.json`, falls back to bundled rationale text.
+- `compliance-gate.ts` → `getFDAList()`: **fail-closed.** This backs a patient-safety hard stop, so a missing/stale/unparsable cache must NOT silently degrade to a pass. It returns a *result* carrying provenance, and the gate blocks the request unless the list is confirmed fresh-and-authoritative.
 
 ```typescript
-function readCache<T>(path: string, fallback: T): T {
+// Generic fail-OPEN reader — only for non-safety rationale text.
+function readCacheOpen<T>(path: string, fallback: T): T {
   try {
     if (!existsSync(path)) return fallback;
     const cached = JSON.parse(readFileSync(path, 'utf-8'));
@@ -586,7 +605,74 @@ function readCache<T>(path: string, fallback: T): T {
     return cached;
   } catch { return fallback; }
 }
+
+// Compliance reader — fail-CLOSED. Never returns a usable list silently;
+// it returns the list AND its provenance so the gate can decide to block.
+type FDAListResult = {
+  ineligible: { name: string; reason: string }[];
+  origin: 'fda_cache' | 'static_fallback';
+  fetched_at: string | null;
+  stale: boolean;
+  authoritative: boolean;   // true only for a fresh, parsed cache/fda-list.json
+};
+
+function getFDAList(): FDAListResult {
+  try {
+    if (existsSync(CACHE_FDA_PATH)) {
+      const cached = JSON.parse(readFileSync(CACHE_FDA_PATH, 'utf-8'));
+      const age = Date.now() - new Date(cached.fetched_at).getTime();
+      const stale = age > 7 * 24 * 60 * 60 * 1000;
+      return {
+        ineligible: cached.ineligible ?? [],
+        origin: 'fda_cache',
+        fetched_at: cached.fetched_at,
+        stale,
+        authoritative: !stale,
+      };
+    }
+  } catch { /* fall through to static fallback below */ }
+
+  // No fresh authoritative cache. Load the static list ONLY as data, marked non-authoritative.
+  const fb = JSON.parse(readFileSync(FALLBACK_FDA_PATH, 'utf-8'));
+  return {
+    ineligible: fb.ineligible ?? [],
+    origin: 'static_fallback',
+    fetched_at: fb.updated ?? null,
+    stale: true,
+    authoritative: false,
+  };
+}
 ```
+
+**Compliance gate decision logic (`compliance-gate.ts`):**
+
+```typescript
+function checkCompliance(drug: string): ComplianceResult {
+  const list = getFDAList();
+  const hit = list.ineligible.find(e => matchesDrug(e.name, drug));
+
+  // A positive match always blocks, regardless of source — the static fallback
+  // can only ADD known-bad drugs, never clear one.
+  if (hit) {
+    return { eligible: false, status: 'ineligible', drug, reason: hit.reason, source: provenance(list) };
+  }
+
+  // No match. We may only PASS on an authoritative list. If the list is a stale
+  // or static fallback, "not found" is not trustworthy — a newly-listed drug
+  // would be a false negative — so fail closed.
+  if (!list.authoritative && !DEMO_OFFLINE_MODE) {
+    return {
+      eligible: false, status: 'unverifiable', drug,
+      reason: 'FDA difficult-to-compound list could not be confirmed current; refusing to certify eligibility. Run scripts/refresh-regulatory-cache.ts.',
+      source: provenance(list),
+    };
+  }
+
+  return { eligible: true, status: 'eligible', drug, source: provenance(list) };
+}
+```
+
+- `DEMO_OFFLINE_MODE` is an **explicit, opt-in** env flag (e.g. `DEMO_OFFLINE_MODE=true`) for running the demo with no network/cache. When set, an unverifiable "not found" is allowed to pass **but** is still emitted with `origin: 'static_fallback'`, `stale: true`, and the UI banner makes clear the eligibility check ran against an unverified offline list. It is never the default.
 
 ---
 
@@ -594,13 +680,14 @@ function readCache<T>(path: string, fallback: T): T {
 
 | Failure | Behaviour |
 |---|---|
-| Drug on FDA list | `compliance_result { eligible: false }` emitted; stream closes; no MFR drafted |
+| Drug on FDA list | `compliance_result { eligible: false, status: 'ineligible' }` emitted; stream closes; no MFR drafted |
+| FDA list cannot be confirmed fresh (cache missing/stale/unparsable) and not in `DEMO_OFFLINE_MODE` | **Fail closed:** `compliance_result { eligible: false, status: 'unverifiable' }` emitted; stream closes; no MFR drafted; UI shows "regulatory data unavailable — refresh cache" |
 | openFDA down | Use ingredient name as-is; note "label data unavailable" in MFR |
 | Daytona unavailable / `DAYTONA_API_KEY` missing | Fall back to in-process decimal.js; no `sandbox_*` events emitted; `reconcile()` still runs |
-| Insforge write fails | Log error, continue; stream already closed; never surfaces to user |
-| `INSFORGE_*` env vars missing | `persistRun` is a no-op |
+| Insforge write fails | Retried up to 3× via the idempotent `persist_run` RPC; if still failing, `audit_status { state: 'failed' }` is emitted **before** `done` and shown to the operator (record marked not-signed-off). `mfr_runs` and `agent_decisions` never diverge — the RPC is one transaction. |
+| `INSFORGE_*` env vars missing | Audit disabled; `audit_status { state: 'failed', detail: 'audit disabled' }` emitted so the missing trail is explicit, not silent |
 | `cache/regulatory.json` missing or stale | `getRegulatoryRules()` returns `data/bud_rules.json` fallback |
-| `cache/fda-list.json` missing or stale | `getFDAList()` returns `data/fda-compliance-fallback.json` |
+| `cache/fda-list.json` missing or stale | `getFDAList()` returns the static list marked `authoritative: false`; the gate **fails closed** (blocks with `status: 'unverifiable'`) unless `DEMO_OFFLINE_MODE=true`. The static list can only *add* known-bad drugs (a positive match still blocks), never certify a "not found" pass. |
 | Rtrvr API error in script | Script logs and exits non-zero; cache not written; no impact on app |
 | Full SSE stream error | Emit `{ type: 'error', message }` and close; client shows error state |
 | Demo day network failure | `?fallback=true` replays `fallback-events.ts` with delays; no network required |
@@ -617,9 +704,12 @@ DAYTONA_SERVER_URL=                 # Optional — defaults to https://app.dayto
 INSFORGE_BASE_URL=                  # Optional — e.g. https://your-project.us-east.insforge.app
 INSFORGE_ANON_KEY=                  # Optional — anon key from InsForge dashboard
 RTRVR_API_KEY=                      # Optional — only needed to run refresh-regulatory-cache.ts
+DEMO_OFFLINE_MODE=                   # Optional — set true ONLY to allow eligibility passes against the
+                                    #   static fallback list when no fresh FDA cache exists. Never set in
+                                    #   any environment that could be mistaken for real use. Default: unset.
 ```
 
-All three sponsor integrations are optional at runtime. The clean-formula demo runs end-to-end with only `ANTHROPIC_API_KEY` set (math runs in-process, audit skipped, static regulatory JSON used).
+All three sponsor integrations are optional at runtime. With only `ANTHROPIC_API_KEY` set, the math runs in-process and audit is skipped. **However, the compliance gate fails closed by default:** with no fresh `cache/fda-list.json`, a clean-formula run is blocked with `status: 'unverifiable'` until you either run `scripts/refresh-regulatory-cache.ts` or explicitly set `DEMO_OFFLINE_MODE=true` to accept the unverified static list for an offline demo.
 
 ---
 
