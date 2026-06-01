@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeBud } from '@/lib/tools/bud-engine';
+import { computeBud, assertAqueousCeiling } from '@/lib/tools/bud-engine';
 
 describe('computeBud', () => {
   it('aqueous nonpreserved → 14 days refrigerated', () => {
@@ -55,5 +55,24 @@ describe('computeBud', () => {
   it('throws on an unknown aw_class rather than guessing', () => {
     // @ts-expect-error deliberately invalid
     expect(() => computeBud({ aw_class: 'plasma', preserved: false, dosage_form: 'cream' })).toThrow();
+  });
+});
+
+describe('assertAqueousCeiling (fail-closed data guard)', () => {
+  it('passes for valid aqueous ceilings', () => {
+    expect(() => assertAqueousCeiling([
+      { id: 'aq-nonpreserved', aw_class: 'aqueous', default_days: 14 },
+      { id: 'aq-preserved', aw_class: 'aqueous', default_days: 35 },
+    ])).not.toThrow();
+  });
+  it('throws if an aqueous rule exceeds 35 days', () => {
+    expect(() => assertAqueousCeiling([
+      { id: 'bad-aq', aw_class: 'aqueous', default_days: 180 },
+    ])).toThrow(/aqueous/i);
+  });
+  it('ignores nonaqueous rules (180 is fine there)', () => {
+    expect(() => assertAqueousCeiling([
+      { id: 'nonaq-other', aw_class: 'nonaqueous', default_days: 180 },
+    ])).not.toThrow();
   });
 });

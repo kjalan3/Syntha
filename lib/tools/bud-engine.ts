@@ -22,6 +22,30 @@ interface Rule {
 
 const RULES = rulesData.rules as Rule[];
 
+/** Highest legitimate aqueous BUD ceiling (preserved aqueous, USP <795>). */
+const AQUEOUS_CEILING_DAYS = 35;
+
+/**
+ * Fail-closed data guard: aqueous BUDs must never exceed 35 days. If a bad edit
+ * to bud_rules.json gives an aqueous rule a larger ceiling (e.g. 180), throw so
+ * the app fails to start rather than silently shipping an unsafe BUD.
+ */
+export function assertAqueousCeiling(
+  rules: { id: string; aw_class: string; default_days: number }[],
+): void {
+  for (const r of rules) {
+    if (r.aw_class === 'aqueous' && r.default_days > AQUEOUS_CEILING_DAYS) {
+      throw new Error(
+        `Invalid bud_rules.json: aqueous rule "${r.id}" has default_days ${r.default_days} > ${AQUEOUS_CEILING_DAYS}; ` +
+          `aqueous BUDs must never exceed ${AQUEOUS_CEILING_DAYS} days (USP <795>).`,
+      );
+    }
+  }
+}
+
+// Run the invariant once at module load.
+assertAqueousCeiling(RULES);
+
 /** Deterministic rule selection — never model judgment. */
 function ruleIdFor(input: BudInput): string {
   if (input.aw_class === 'aqueous') {
