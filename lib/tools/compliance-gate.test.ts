@@ -57,3 +57,35 @@ describe('checkCompliance (fail-closed)', () => {
     expect(r.status).toBe('unverifiable');
   });
 });
+
+describe('checkCompliance fails closed on degraded cache', () => {
+  it('cache present but missing fetched_at → unverifiable (NaN age must be stale)', () => {
+    mkdirSync(TMP, { recursive: true });
+    writeFileSync(FDA, JSON.stringify({ ineligible: [] })); // no fetched_at
+    const r = checkCompliance('hydrocortisone', { now: FIXED_NOW, demoOffline: false });
+    expect(r.status).toBe('unverifiable');
+    expect(r.eligible).toBe(false);
+  });
+
+  it('cache present but garbage fetched_at → unverifiable', () => {
+    mkdirSync(TMP, { recursive: true });
+    writeFileSync(FDA, JSON.stringify({ fetched_at: 'not-a-date', ineligible: [] }));
+    const r = checkCompliance('hydrocortisone', { now: FIXED_NOW, demoOffline: false });
+    expect(r.status).toBe('unverifiable');
+  });
+
+  it('fresh cache with malformed ineligible shape → falls back, unverifiable (not silently empty deny-list)', () => {
+    mkdirSync(TMP, { recursive: true });
+    writeFileSync(FDA, JSON.stringify({ fetched_at: '2026-05-30T12:00:00Z', ineligible: 'oops' }));
+    const r = checkCompliance('hydrocortisone', { now: FIXED_NOW, demoOffline: false });
+    expect(r.status).toBe('unverifiable');
+    expect(r.source.origin).toBe('static_fallback');
+  });
+
+  it('a deny-listed drug still blocks even via the static fallback when cache is malformed', () => {
+    mkdirSync(TMP, { recursive: true });
+    writeFileSync(FDA, JSON.stringify({ fetched_at: 'not-a-date', ineligible: [] }));
+    const r = checkCompliance('estriol', { now: FIXED_NOW, demoOffline: false });
+    expect(r.status).toBe('ineligible'); // estriol is on the static fallback list
+  });
+});

@@ -12,6 +12,19 @@ interface Options {
   cachePath?: string;
 }
 
+function isValidIneligible(v: unknown): v is { name: string; reason: string }[] {
+  return (
+    Array.isArray(v) &&
+    v.every(
+      (e) =>
+        e &&
+        typeof e === 'object' &&
+        typeof (e as { name?: unknown }).name === 'string' &&
+        typeof (e as { reason?: unknown }).reason === 'string',
+    )
+  );
+}
+
 export function getFDAList(opts: Options = {}): FDAListResult {
   const now = opts.now ?? Date.now();
   const path = opts.cachePath ?? CACHE_FDA_PATH;
@@ -19,14 +32,21 @@ export function getFDAList(opts: Options = {}): FDAListResult {
     if (existsSync(path)) {
       const cached = JSON.parse(readFileSync(path, 'utf-8'));
       const age = now - new Date(cached.fetched_at).getTime();
-      const stale = age > STALE_MS;
-      return {
-        ineligible: cached.ineligible ?? [],
-        origin: 'fda_cache',
-        fetched_at: cached.fetched_at,
-        stale,
-        authoritative: !stale,
-      };
+      // A non-finite age (missing/garbage fetched_at) makes freshness unknowable:
+      // the whole cache is untrustworthy, so fall through to the static fallback
+      // (deny-list still applies, non-authoritative). A finite but old age is
+      // simply stale. A malformed ineligible shape is likewise unusable.
+      const stale = !Number.isFinite(age) || age > STALE_MS;
+      if (Number.isFinite(age) && isValidIneligible(cached.ineligible)) {
+        return {
+          ineligible: cached.ineligible,
+          origin: 'fda_cache',
+          fetched_at: cached.fetched_at,
+          stale,
+          authoritative: !stale,
+        };
+      }
+      /* non-finite age or malformed shape: fall through to static fallback (non-authoritative) */
     }
   } catch {
     /* fall through to static fallback */
