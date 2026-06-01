@@ -33,3 +33,17 @@ describe('reconcile', () => {
     expect(f.message).toMatch(/unit/i);
   });
 });
+
+describe('reconcile fails closed on malformed input', () => {
+  const bad = ['+5%', '5e1%', 'NaN', '5%%', '5 %', '1,000%', ''];
+  for (const v of bad) {
+    it(`rejects "${v}" as error, never pass`, () => {
+      const f = reconcile({ ingredient: 'x', prescribed: '5%', stated: v, computed: '5%' });
+      expect(f.severity).toBe('error');
+    });
+  }
+  it('missing prescribed → error', () => {
+    const f = reconcile({ ingredient: 'x', prescribed: '', stated: '5%', computed: '5%' });
+    expect(f.severity).toBe('error');
+  });
+});

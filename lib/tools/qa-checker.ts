@@ -12,7 +12,7 @@ function parsePercent(raw: string): Decimal {
   const trimmed = raw.trim();
   if (trimmed === '') throw new Error('missing value');
   // Reject anything that is not a bare percentage (e.g. "50 mg/mL").
-  if (!/^[0-9]*\.?[0-9]+\s*%?$/.test(trimmed)) {
+  if (!/^[0-9]*\.?[0-9]+%?$/.test(trimmed)) {
     throw new Error(`unit mismatch or unparseable value: "${raw}" (expected a % concentration)`);
   }
   return new Decimal(trimmed.replace('%', ''));
