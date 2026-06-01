@@ -5,7 +5,7 @@ export async function createCalcSandbox(): Promise<(SandboxRunner & { destroy: (
   if (!process.env.DAYTONA_API_KEY) return null;
   try {
     // @ts-expect-error optional dependency not installed
-    const { Daytona } = await import('@daytona/sdk');
+    const { Daytona } = await import(/* turbopackOptional: true */ '@daytona/sdk');
     const daytona = new Daytona({
       apiKey: process.env.DAYTONA_API_KEY,
       apiUrl: process.env.DAYTONA_SERVER_URL,

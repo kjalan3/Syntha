@@ -22,7 +22,7 @@ async function getClient(): Promise<InsforgeClient | null> {
     return null;
   }
   // @ts-expect-error optional dependency not installed
-  const { createClient } = await import('@insforge/sdk');
+  const { createClient } = await import(/* turbopackOptional: true */ '@insforge/sdk');
   cachedClient = createClient({ baseUrl, anonKey }) as unknown as InsforgeClient;
   return cachedClient;
 }
